@@ -1,5 +1,6 @@
 (ns clojure-course-task03.core
-  (:require [clojure.set]))
+  (:require [clojure.set])
+  (:require [clojure.string :refer [lower-case]]))
 
 (defn join* [table-name conds]
   (let [op (first conds)
@@ -82,162 +83,106 @@
     `(select* ~(str table-name)  ~env#)))
 
 
-;; Examples:
-;; -------------------------------------
+;; Task implementation
+;; ===================
 
-(let [proposal-fields-var [:person, :phone, :address, :price]]
-  (select proposal
-          (fields :person, :phone, :id)
-          (where {:price 11})
-          (join agents (= agents.proposal_id proposal.id))
-          (order :f3)
-          (limit 5)
-          (offset 5)))
+#_(defn resolve [^clojure.lang.Symbol s] (atom (eval s))) ; LightTable workaround
 
-(let [proposal-fields-var [:person, :phone, :address, :price]]
-  (select proposal
-          (fields :all)
-          (where {:price 11})
-          (join agents (= agents.proposal_id proposal.id))
-          (order :f3)
-          (limit 5)
-          (offset 5)))
+(defn group-symbol [^String group]
+   (symbol (str "group-" group)))
 
-(let [proposal-fields-var [:all]]
-  (select proposal
-          (fields :all)
-          (where {:price 11})
-          (join agents (= agents.proposal_id proposal.id))
-          (order :f3)
-          (limit 5)
-          (offset 5)))
+(defn resolve-group [group]
+  (deref (resolve (group-symbol group))))
+
+(defn fields-var-symbol [^String table]
+  (symbol (str table "-fields-var")))
+
+(defn select-symbol [name* ^String table]
+  (symbol (str "select-" (lower-case name*) "-" table)))
+
+(defn group-definition [name* table-kw fields]
+  (let [table (name table-kw)]
+    `(defn ~(select-symbol name* table) []
+                  (let [~(fields-var-symbol table) ~fields]
+                    (select ~table
+                            (~'fields ~@fields))))))
+ 
+(defmacro group [name & body]
+  (let [permission-table (->> body 
+                         (partition 3)
+                         (mapcat (fn [[table _ fields]] [(keyword table) (mapv keyword fields)]))
+                         (apply hash-map))
+        group-defs (map #(apply (partial group-definition name) %) permission-table)]
+    `(do 
+       ~@group-defs
+       (def ~(group-symbol name) ~permission-table))))
+  
+(defn compact-fields [x]
+  (if (= -1 (. x (indexOf :all)))
+    (vec x)
+    [:all]))
+
+(defn merge-tables [^clojure.lang.IPersistentMap x 
+                    ^clojure.lang.IPersistentMap y] 
+  (merge-with (comp compact-fields concat) x y))
+
+(defn user-permission-tables-symbol [^String name*]
+  (symbol (str name* "-permission-tables")))
+
+(defn resolve-user-permission-tables [name*]
+  (deref (resolve (user-permission-tables-symbol name*))))
+
+(defmacro user [name* & body]
+  (let [in-body (first body)
+        belongs-to (rest in-body)]
+    (assert (= (first in-body) 'belongs-to) "Syntax error")
+    (let [permission-tables 
+          (->> belongs-to 
+               (map resolve-group) 
+               (reduce merge-tables))]
+      `(def ~(user-permission-tables-symbol name*) ~permission-tables))))
+
+(defmacro with-user [name* & body]
+  (let [bindings (->> name*
+                      (resolve-user-permission-tables)
+                      (mapcat #(list 
+                                (-> % first name fields-var-symbol)
+                                (second %)))
+                      (vec))]
+    `(let ~bindings ~@body)))
 
 
 (comment
-  ;; Описание и примеры использования DSL
-  ;; ------------------------------------
-  ;; Предметная область -- разграничение прав доступа на таблицы в реелтерском агенстве
-  ;;
-  ;; Работают три типа сотрудников: директор (имеет доступ ко всему), операторы ПК (принимают заказы, отвечают на тел. звонки,
-  ;; передают агенту инфу о клиентах), агенты (люди, которые лично встречаются с клиентами).
-  ;;
-  ;; Таблицы:
-  ;; proposal -> [id, person, phone, address, region, comments, price]
-  ;; clients -> [id, person, phone, region, comments, price_from, price_to]
-  ;; agents -> [proposal_id, agent, done]
+; Usage
 
-  ;; Определяем группы пользователей и
-  ;; их права на таблицы и колонки
-  (group Agent
-         proposal -> [person, phone, address, price]
-         agents -> [clients_id, proposal_id, agent])
+(group Agent
+       proposal -> [person, phone, address, price]
+       agents -> [client_id, proposal_id, agent])
 
-  ;; Предыдущий макрос создает эти функции
-  (select-agent-proposal) ;; select person, phone, address, price from proposal;
-  (select-agent-agents)  ;; select clients_id, proposal_id, agent from agents;
+(group Operator
+       proposal -> [:all]
+       clients -> [:all])
 
+(group Director
+       proposal -> [:all]
+       clients -> [:all]
+       agents -> [:all])
 
+(select-agent-proposal) ;; select person, phone, address, price from proposal;
+(select-agent-agents)  ;; select client_id, proposal_id, agent from agents;
+group-Agent
 
+(resolve-group "Agent")
 
-  (group Operator
-         proposal -> [:all]
-         clients -> [:all])
+(user Directorov
+      (belongs-to Operator,
+                  Agent,
+                  Director))
 
-  ;; Предыдущий макрос создает эти функции
-  (select-operator-proposal) ;; select * proposal;
-  (select-operator-clients)  ;; select * from clients;
+(resolve-user-allowed-tables "Directorov")
 
+(with-user Directorov (select clients (fields :all)))
+
+)
 
 
-  (group Director
-         proposal -> [:all]
-         clients -> [:all]
-         agents -> [:all])
-
-  ;; Предыдущий макрос создает эти функции
-  (select-director-proposal) ;; select * proposal;
-  (select-director-clients)  ;; select * from clients;
-  (select-director-agents)  ;; select * from agents;
-  
-
-  ;; Определяем пользователей и их группы
-
-  ;; Макрос user должен сохранять разрешенные пользователю таблицы и поля в атоме *user-tables-vars*.
-  
-  (user Ivanov
-        (belongs-to Agent))
-
-  (user Sidorov
-        (belongs-to Agent))
-
-  (user Petrov
-        (belongs-to Operator))
-
-  (user Directorov
-        (belongs-to Operator,
-                    Agent,
-                    Director))
-
-
-  ;; Оператор select использует внутри себя переменную <table-name>-fields-var.
-  ;; Для указанного юзера макрос with-user должен определять переменную <table-name>-fields-var
-  ;; для каждой таблицы, которая должна содержать список допустимых полей этой таблицы
-  ;; для этого пользователя.
-
-  ;; Агенту можно видеть свои "предложения"
-  (with-user Ivanov
-    (select proposal
-            (fields :person, :phone, :address, :price)
-            (join agents (= agents.proposal_id proposal.id))))
-
-  ;; Агенту не доступны клиенты
-  (with-user Ivanov
-    (select clients
-            (fields :all)))  ;; Empty set
-
-  ;; Директор может видеть состояние задач агентов
-  (with-user Directorov
-    (select agents
-            (fields :done)
-            (where {:agent "Ivanov"})
-            (order :done :ASC)))
-  
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; TBD: Implement the following macros
-;;
-
-(defmacro group [name & body]
-  ;; Пример
-  ;; (group Agent
-  ;;      proposal -> [person, phone, address, price]
-  ;;      agents -> [clients_id, proposal_id, agent])
-  ;; 1) Создает группу Agent
-  ;; 2) Запоминает, какие таблицы (и какие колонки в таблицах)
-  ;;    разрешены в данной группе.
-  ;; 3) Создает следующие функции
-  ;;    (select-agent-proposal) ;; select person, phone, address, price from proposal;
-  ;;    (select-agent-agents)  ;; select clients_id, proposal_id, agent from agents;
-  )
-
-(defmacro user [name & body]
-  ;; Пример
-  ;; (user Ivanov
-  ;;     (belongs-to Agent))
-  ;; Создает переменные Ivanov-proposal-fields-var = [:person, :phone, :address, :price]
-  ;; и Ivanov-agents-fields-var = [:clients_id, :proposal_id, :agent]
-  ;; Сохраняет эти же переменные в атоме *user-tables-vars*.
-  )
-
-(defmacro with-user [name & body]
-  ;; Пример
-  ;; (with-user Ivanov
-  ;;   . . .)
-  ;; 1) Находит все переменные, начинающиеся со слова Ivanov, в *user-tables-vars*
-  ;;    (Ivanov-proposal-fields-var и Ivanov-agents-fields-var)
-  ;; 2) Создает локальные привязки без префикса Ivanov-:
-  ;;    proposal-fields-var и agents-fields-var.
-  ;;    Таким образом, функция select, вызванная внутри with-user, получает
-  ;;    доступ ко всем необходимым переменным вида <table-name>-fields-var.
-  )
