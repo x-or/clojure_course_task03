@@ -35,7 +35,8 @@
      (and (= (first flds) :all) (= (first allowed) :all)) "*"
      (and (= (first flds) :all) (not= (first allowed) :all)) (-fields** allowed)
      (= :all (first allowed)) (-fields** flds)
-     :else (-fields** (->> flds (map v) (filter (comp not nil?)))))))
+     :else (-fields** (filter v flds)))))
+
 
 (defn select* [table-name {:keys [fields where join order limit offset]}]
   (-> (str "SELECT " fields " FROM " table-name " ")
