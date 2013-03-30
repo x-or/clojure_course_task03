@@ -4,16 +4,16 @@
 
 (group Agent
        proposal -> [person, phone, address, price]
-       agents -> [client_id, proposal_id, agent])
+       agents -> [clients_id, proposal_id, agent])
 
 
 (group Operator
        proposal -> [:all]
-       client -> [:all])
+       clients -> [:all])
 
 (group Director
        proposal -> [:all]
-       client -> [:all]
+       clients -> [:all]
        agents -> [:all])
 
 
@@ -48,7 +48,7 @@
 (deftest select-agent-agents-test
   (testing "Tesing select-agent-agents"
     (let [result (select-agent-agents)]
-      (is (= result "SELECT client_id,proposal_id,agent FROM agents ")))))
+      (is (= result "SELECT clients_id,proposal_id,agent FROM agents ")))))
 
 
 (deftest directorov-with-user-test
