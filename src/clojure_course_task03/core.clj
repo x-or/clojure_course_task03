@@ -118,9 +118,9 @@
        (def ~(group-symbol name) ~permission-table))))
   
 (defn compact-fields [x]
-  (if (= -1 (. x (indexOf :all)))
-    (vec x)
-    [:all]))
+  (if (some #{:all} x)
+    [:all]
+    (vec x)))
 
 (defn merge-tables [^clojure.lang.IPersistentMap x 
                     ^clojure.lang.IPersistentMap y] 
@@ -174,12 +174,17 @@ group-Agent
 
 (resolve-group "Agent")
 
+(compact-fields [:all])
+(compact-fields '(:all :all))
+(compact-fields [:a :b :c])
+(compact-fields [:a :b :all :c])
+
 (user Directorov
       (belongs-to Operator,
                   Agent,
                   Director))
 
-(resolve-user-allowed-tables "Directorov")
+(resolve-user-permission-tables "Directorov")
 
 (with-user Directorov (select clients (fields :all)))
 
